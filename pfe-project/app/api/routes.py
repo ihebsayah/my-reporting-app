@@ -2,12 +2,12 @@
 
 import importlib.util
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
-from app.api.job_store import BatchJobRecord, InMemoryBatchJobStore
 from app.api.schemas import (
     AdminModelResponse,
     AdminMetricsResponse,
@@ -25,9 +25,11 @@ from app.api.schemas import (
     FieldKPIResponse,
     KPIResponse,
     PipelineResponse,
+    ResponseMetadata,
     TextRequest,
 )
 from app.config import get_settings
+from app.database import AsyncBatchJobRepository, get_session_factory, init_database
 from app.kpi import PipelineKPIService, kpi_report_to_payload
 from app.ml.ner_extractor import RegexSpacyEnsembleExtractor
 from app.pipeline.batch_processor import BatchProcessingResult
@@ -42,7 +44,8 @@ extractor = RegexSpacyEnsembleExtractor(settings=settings)
 pipeline_engine = SequentialExtractionDecisionEngine(settings=settings, extractor=extractor)
 batch_processor = PipelineBatchProcessor(settings=settings, engine=pipeline_engine)
 kpi_service = PipelineKPIService()
-job_store = InMemoryBatchJobStore()
+session_factory = get_session_factory(settings)
+init_database(settings)
 
 ERROR_RESPONSES = {
     400: {"model": ErrorResponse, "description": "Invalid request payload."},
@@ -74,6 +77,7 @@ def extract_entities(request: TextRequest) -> ExtractionResponse:
             )
             for entity in result.entities
         ],
+        metadata=_build_response_metadata(),
     )
 
 
@@ -102,6 +106,7 @@ def run_pipeline(request: TextRequest) -> PipelineResponse:
             )
             for field in result.fields
         ],
+        metadata=_build_response_metadata(),
     )
 
 
@@ -117,21 +122,7 @@ def run_pipeline_batch(request: BatchTextRequest) -> BatchPipelineResponse:
     if request.document_ids is not None and len(request.document_ids) != len(request.texts):
         raise HTTPException(status_code=400, detail="document_ids length must match texts length.")
     result = batch_processor.run_texts(request.texts, request.document_ids)
-    return BatchPipelineResponse(
-        documents=[
-            BatchDocumentResponse(
-                document_id=document.document_id,
-                overall_decision=document.result.overall_decision,
-                field_count=len(document.result.fields),
-            )
-            for document in result.documents
-        ],
-        metrics=BatchMetricsResponse(
-            document_count=result.metrics.document_count if result.metrics else 0,
-            overall_decisions=result.metrics.overall_decisions if result.metrics else {},
-            field_decisions=result.metrics.field_decisions if result.metrics else {},
-        ),
-    )
+    return _serialize_batch_result(result)
 
 
 @router.post(
@@ -149,7 +140,8 @@ def submit_pipeline_batch(
     if request.document_ids is not None and len(request.document_ids) != len(request.texts):
         raise HTTPException(status_code=400, detail="document_ids length must match texts length.")
 
-    job = job_store.create_job()
+    with session_factory() as session:
+        job = AsyncBatchJobRepository(session).create_job()
     background_tasks.add_task(
         _process_batch_job,
         job.job_id,
@@ -160,6 +152,7 @@ def submit_pipeline_batch(
         job_id=job.job_id,
         status=job.status,
         submitted_at=job.submitted_at,
+        metadata=_build_response_metadata(),
     )
 
 
@@ -171,7 +164,8 @@ def submit_pipeline_batch(
 )
 def get_pipeline_batch_job(job_id: str) -> AsyncBatchStatusResponse:
     """Return the current state of an async batch pipeline job."""
-    job = job_store.get_job(job_id)
+    with session_factory() as session:
+        job = AsyncBatchJobRepository(session).get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Batch job was not found.")
     return AsyncBatchStatusResponse(
@@ -180,7 +174,7 @@ def get_pipeline_batch_job(job_id: str) -> AsyncBatchStatusResponse:
         submitted_at=job.submitted_at,
         completed_at=job.completed_at,
         error_message=job.error_message,
-        result=_serialize_batch_result(job.result),
+        result=BatchPipelineResponse(**job.result_payload) if job.result_payload else None,
     )
 
 
@@ -205,6 +199,7 @@ def build_kpi_report(request: BatchTextRequest) -> KPIResponse:
         reject_documents=payload["reject_documents"],
         average_field_confidence=payload["average_field_confidence"],
         field_kpis=[FieldKPIResponse(**item) for item in payload["field_kpis"]],
+        metadata=_build_response_metadata(),
     )
 
 
@@ -219,10 +214,14 @@ def admin_status() -> AdminStatusResponse:
     model_path = Path(settings.ner_model_path)
     return AdminStatusResponse(
         app_name=settings.app_name,
+        app_version=settings.app_version,
         environment=settings.app_env,
         debug=settings.app_debug,
         ner_model_path=str(model_path),
         ner_model_exists=model_path.exists(),
+        pipeline_version=settings.pipeline_version,
+        extraction_version=settings.extraction_version,
+        model_version=settings.model_version,
         default_thresholds={
             "auto": settings.auto_approval_threshold,
             "review_min": settings.review_min_threshold,
@@ -246,6 +245,7 @@ def admin_model() -> AdminModelResponse:
         ner_model_exists=model_path.exists(),
         spacy_available=importlib.util.find_spec("spacy") is not None,
         train_iterations=settings.ner_train_iterations,
+        model_version=settings.model_version,
     )
 
 
@@ -270,6 +270,7 @@ def admin_metrics() -> AdminMetricsResponse:
         reject_documents=payload["reject_documents"],
         average_field_confidence=payload["average_field_confidence"],
         field_kpis=[FieldKPIResponse(**item) for item in payload["field_kpis"]],
+        metadata=_build_response_metadata(),
     )
 
 
@@ -279,14 +280,19 @@ def _process_batch_job(
     document_ids: Optional[List[str]],
 ) -> None:
     """Execute an async batch pipeline job and persist its result."""
-    job_store.mark_running(job_id)
+    with session_factory() as session:
+        repository = AsyncBatchJobRepository(session)
+        repository.mark_running(job_id)
     try:
         result = batch_processor.run_texts(texts, document_ids)
     except Exception as exc:
         logger.exception("Async batch pipeline job %s failed.", job_id, exc_info=exc)
-        job_store.mark_failed(job_id, str(exc))
+        with session_factory() as session:
+            AsyncBatchJobRepository(session).mark_failed(job_id, str(exc))
         return
-    job_store.mark_completed(job_id, result)
+    payload = _serialize_batch_result(result).model_dump()
+    with session_factory() as session:
+        AsyncBatchJobRepository(session).mark_completed(job_id, payload)
 
 
 def _serialize_batch_result(
@@ -309,4 +315,16 @@ def _serialize_batch_result(
             overall_decisions=result.metrics.overall_decisions if result.metrics else {},
             field_decisions=result.metrics.field_decisions if result.metrics else {},
         ),
+        metadata=_build_response_metadata(),
+    )
+
+
+def _build_response_metadata() -> ResponseMetadata:
+    """Build a shared response metadata payload for API traceability."""
+    return ResponseMetadata(
+        processed_at=datetime.now(timezone.utc).isoformat(),
+        app_version=settings.app_version,
+        pipeline_version=settings.pipeline_version,
+        extraction_version=settings.extraction_version,
+        model_version=settings.model_version,
     )

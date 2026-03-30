@@ -19,6 +19,16 @@ class HealthResponse(BaseModel):
     environment: str
 
 
+class ResponseMetadata(BaseModel):
+    """Traceability metadata attached to API responses."""
+
+    processed_at: str
+    app_version: str
+    pipeline_version: str
+    extraction_version: str
+    model_version: str
+
+
 class TextRequest(BaseModel):
     """Single text input request."""
 
@@ -48,6 +58,7 @@ class ExtractionResponse(BaseModel):
 
     text: str
     entities: List[EntityResponse]
+    metadata: ResponseMetadata
 
 
 class FieldDecisionResponse(BaseModel):
@@ -68,6 +79,7 @@ class PipelineResponse(BaseModel):
 
     overall_decision: str
     fields: List[FieldDecisionResponse]
+    metadata: ResponseMetadata
 
 
 class BatchDocumentResponse(BaseModel):
@@ -91,6 +103,7 @@ class BatchPipelineResponse(BaseModel):
 
     documents: List[BatchDocumentResponse]
     metrics: BatchMetricsResponse
+    metadata: ResponseMetadata
 
 
 class AsyncBatchSubmitResponse(BaseModel):
@@ -99,6 +112,7 @@ class AsyncBatchSubmitResponse(BaseModel):
     job_id: str
     status: str
     submitted_at: str
+    metadata: ResponseMetadata
 
 
 class AsyncBatchStatusResponse(BaseModel):
@@ -132,16 +146,21 @@ class KPIResponse(BaseModel):
     reject_documents: int
     average_field_confidence: float
     field_kpis: List[FieldKPIResponse]
+    metadata: ResponseMetadata
 
 
 class AdminStatusResponse(BaseModel):
     """Admin system status response."""
 
     app_name: str
+    app_version: str
     environment: str
     debug: bool
     ner_model_path: str
     ner_model_exists: bool
+    pipeline_version: str
+    extraction_version: str
+    model_version: str
     default_thresholds: Dict[str, float]
     field_thresholds: Dict[str, Dict[str, float]]
 
@@ -155,6 +174,7 @@ class AdminMetricsResponse(BaseModel):
     reject_documents: int
     average_field_confidence: float
     field_kpis: List[FieldKPIResponse]
+    metadata: ResponseMetadata
 
 
 class AdminModelResponse(BaseModel):
@@ -164,3 +184,4 @@ class AdminModelResponse(BaseModel):
     ner_model_exists: bool
     spacy_available: bool
     train_iterations: int
+    model_version: str

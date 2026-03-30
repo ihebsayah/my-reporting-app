@@ -4,14 +4,19 @@ Bootstrap implementation for the AI-based document extraction and reporting syst
 
 ## Current Scope
 
-This initial scaffold focuses on Month 1 foundations:
+This scaffold now covers:
 - project structure aligned with the target architecture
 - centralized configuration and logging
 - Label Studio project configuration generation
 - annotation guideline generation and export helpers
 - Label Studio local Docker bootstrap
 - inter-annotator agreement reporting
-- test coverage for the annotation bootstrap flow
+- regex + spaCy ensemble extraction
+- sequential confidence and decision routing
+- KPI summaries
+- FastAPI production-style endpoints
+- database-backed async batch job persistence
+- automated test coverage across the end-to-end scaffold
 
 ## Quick Start
 
@@ -37,9 +42,14 @@ This initial scaffold focuses on Month 1 foundations:
 API errors return a shared JSON payload:
 `{"detail": "...", "error_code": "..."}`.
 
+Successful API responses now include traceability metadata with:
+`processed_at`, `app_version`, `pipeline_version`, `extraction_version`, and `model_version`.
+
 Async batch flow:
 1. Submit work with `POST /api/v1/pipeline/batch/submit`
 2. Poll status and results with `GET /api/v1/pipeline/batch/jobs/{job_id}`
+
+Async batch jobs are persisted through SQLAlchemy ORM, so they can survive API process restarts as long as the configured database remains available.
 
 ## Annotation Workflow
 

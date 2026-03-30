@@ -17,6 +17,8 @@ def test_extract_endpoint_returns_entities() -> None:
     payload = response.json()
     assert payload["entities"]
     assert any(entity["label"] == "INVOICE_ID" for entity in payload["entities"])
+    assert payload["metadata"]["processed_at"]
+    assert payload["metadata"]["model_version"]
 
 
 def test_pipeline_endpoint_returns_field_decisions() -> None:
@@ -31,6 +33,7 @@ def test_pipeline_endpoint_returns_field_decisions() -> None:
     assert payload["overall_decision"] in {"auto", "review", "reject"}
     assert payload["fields"]
     assert "confidence_factors" in payload["fields"][0]
+    assert payload["metadata"]["pipeline_version"]
 
 
 def test_batch_pipeline_endpoint_returns_metrics() -> None:
@@ -51,6 +54,7 @@ def test_batch_pipeline_endpoint_returns_metrics() -> None:
     assert len(payload["documents"]) == 2
     assert payload["metrics"]["document_count"] == 2
     assert "overall_decisions" in payload["metrics"]
+    assert payload["metadata"]["app_version"]
 
 
 def test_async_batch_submission_and_polling_return_job_result() -> None:
@@ -81,6 +85,8 @@ def test_async_batch_submission_and_polling_return_job_result() -> None:
     assert status_payload["status"] == "completed"
     assert status_payload["result"] is not None
     assert status_payload["result"]["metrics"]["document_count"] == 2
+    assert submit_payload["metadata"]["processed_at"]
+    assert status_payload["result"]["metadata"]["pipeline_version"]
 
 
 def test_kpi_report_endpoint_returns_summary() -> None:
@@ -101,6 +107,7 @@ def test_kpi_report_endpoint_returns_summary() -> None:
     assert payload["document_count"] == 2
     assert "average_field_confidence" in payload
     assert payload["field_kpis"]
+    assert payload["metadata"]["extraction_version"]
 
 
 def test_admin_status_endpoint_returns_versioned_service_metadata() -> None:
@@ -110,8 +117,10 @@ def test_admin_status_endpoint_returns_versioned_service_metadata() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["app_name"]
+    assert payload["app_version"]
     assert "field_thresholds" in payload
     assert "default_thresholds" in payload
+    assert payload["pipeline_version"]
 
 
 def test_admin_model_endpoint_returns_model_metadata() -> None:
@@ -123,6 +132,7 @@ def test_admin_model_endpoint_returns_model_metadata() -> None:
     assert "ner_model_path" in payload
     assert "spacy_available" in payload
     assert "train_iterations" in payload
+    assert payload["model_version"]
 
 
 def test_admin_metrics_endpoint_returns_kpi_summary() -> None:
@@ -133,6 +143,7 @@ def test_admin_metrics_endpoint_returns_kpi_summary() -> None:
     payload = response.json()
     assert payload["document_count"] >= 1
     assert "field_kpis" in payload
+    assert payload["metadata"]["processed_at"]
 
 
 def test_batch_pipeline_endpoint_returns_standard_error_payload() -> None:

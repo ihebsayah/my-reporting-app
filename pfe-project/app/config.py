@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = Field(default="PFE Reporting App", alias="APP_NAME")
+    app_version: str = Field(default="0.1.0", alias="APP_VERSION")
     app_env: str = Field(default="development", alias="APP_ENV")
     app_debug: bool = Field(default=True, alias="APP_DEBUG")
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
@@ -65,6 +66,18 @@ class Settings(BaseSettings):
     ner_model_path: str = Field(
         default="artifacts/models/ner",
         alias="NER_MODEL_PATH",
+    )
+    pipeline_version: str = Field(
+        default="sequential-v1",
+        alias="PIPELINE_VERSION",
+    )
+    extraction_version: str = Field(
+        default="regex-spacy-ensemble-v1",
+        alias="EXTRACTION_VERSION",
+    )
+    model_version: str = Field(
+        default="untrained-regex-fallback",
+        alias="MODEL_VERSION",
     )
     field_thresholds_json: str = Field(
         default=(
