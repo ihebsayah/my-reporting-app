@@ -1,0 +1,5 @@
+{
+  "doc-001": ["INVOICE_ID", "INVOICE_DATE", "TOTAL_AMOUNT"],
+  "doc-002": ["INVOICE_ID", "VENDOR_NAME"],
+  "doc-003": ["TOTAL_AMOUNT"]
+}

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfe-reporting-app"
+version = "0.1.0"
+description = "AI-based document extraction and reporting system bootstrap project."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "PFE Internship Project" }
+]
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "pydantic>=2.8.0,<3.0.0",
+  "pydantic-settings>=2.3.0,<3.0.0",
+  "python-dotenv>=1.0.1,<2.0.0",
+  "sqlalchemy>=2.0.32,<3.0.0",
+  "alembic>=1.13.2,<2.0.0",
+  "requests>=2.32.3,<3.0.0"
+]
+
+[project.scripts]
+annotation-bootstrap = "app.annotation.cli:main"
+ml-train = "app.ml.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.2,<9.0.0",
+  "pytest-cov>=5.0.0,<6.0.0",
+  "flake8>=7.1.1,<8.0.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+include = ["app*", "tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]

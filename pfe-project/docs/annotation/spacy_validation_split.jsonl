@@ -1,0 +1,1 @@
+{"document_id": "demo-002", "text": "Invoice INV-2026-002 total is $18.00", "entities": [[8, 20, "INVOICE_ID"], [30, 36, "TOTAL_AMOUNT"]]}

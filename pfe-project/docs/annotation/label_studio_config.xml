@@ -1,0 +1,12 @@
+<View>
+  <Header value="Invoice Field Extraction"/>
+  <Text name="text" value="$text" granularity="word"/>
+  <Labels name="label" toName="text">
+    <Label value="INVOICE_ID" background="#D97706" hint="Primary invoice reference or identifier."/>
+    <Label value="INVOICE_DATE" background="#2563EB" hint="Document issue date."/>
+    <Label value="DUE_DATE" background="#7C3AED" hint="Invoice payment deadline."/>
+    <Label value="VENDOR_NAME" background="#059669" hint="Supplier or issuing company name."/>
+    <Label value="TOTAL_AMOUNT" background="#DC2626" hint="Final invoice total payable."/>
+    <Label value="TAX_AMOUNT" background="#EA580C" hint="Tax value applied to the invoice total."/>
+  </Labels>
+</View>
