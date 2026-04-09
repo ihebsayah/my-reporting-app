@@ -38,6 +38,8 @@ from app.api.schemas import (
     BatchMetricsResponse,
     BatchPipelineResponse,
     BatchTextRequest,
+    DriftResponse,
+    DriftWindowStats,
     EntityResponse,
     ErrorResponse,
     ExtractionFieldHistoryResponse,
@@ -53,6 +55,7 @@ from app.api.schemas import (
     NERKPIResponse,
     PipelineResponse,
     ResponseMetadata,
+    RetrainingResponse,
     TextRequest,
 )
 from app.config import get_settings
@@ -480,6 +483,76 @@ def submit_feedback(request: FeedbackRequest) -> FeedbackResponse:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Monitoring
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/monitoring/drift",
+    response_model=DriftResponse,
+    responses=ERROR_RESPONSES,
+    tags=["monitoring"],
+)
+def get_drift_report(
+    baseline_window: int = 50,
+    recent_window: int = 20,
+    auto_threshold: float = 0.10,
+    confidence_threshold: float = 0.05,
+) -> DriftResponse:
+    """Run a sliding-window confidence and auto-rate drift check from DB records.
+
+    Returns ``insufficient_history=True`` when fewer than
+    ``baseline_window + recent_window`` extraction records are stored.
+    """
+    from app.monitoring.drift import ConfidenceDriftDetector
+
+    needed = baseline_window + recent_window
+    with session_factory() as session:
+        repo = ExtractionResultRepository(session)
+        records = (
+            repo.list_by_decision("auto", limit=needed)
+            + repo.list_by_decision("review", limit=needed)
+            + repo.list_by_decision("reject", limit=needed)
+        )
+
+    detector = ConfidenceDriftDetector(
+        auto_rate_drop_threshold=auto_threshold,
+        confidence_drop_threshold=confidence_threshold,
+        baseline_window_size=baseline_window,
+        recent_window_size=recent_window,
+    )
+    samples = detector.samples_from_records(records)
+    report = detector.detect(samples)
+    insufficient = len(samples) < needed
+
+    return DriftResponse(
+        drift_detected=report.drift_detected,
+        triggered_signals=report.triggered_signals,
+        auto_rate_drop=report.auto_rate_drop,
+        confidence_drop=report.confidence_drop,
+        auto_rate_threshold=report.auto_rate_threshold,
+        confidence_threshold=report.confidence_threshold,
+        baseline=DriftWindowStats(
+            window_size=report.baseline.window_size,
+            auto_rate=report.baseline.auto_rate,
+            review_rate=report.baseline.review_rate,
+            reject_rate=report.baseline.reject_rate,
+            mean_confidence=report.baseline.mean_confidence,
+        ) if not insufficient else None,
+        recent=DriftWindowStats(
+            window_size=report.recent.window_size,
+            auto_rate=report.recent.auto_rate,
+            review_rate=report.recent.review_rate,
+            reject_rate=report.recent.reject_rate,
+            mean_confidence=report.recent.mean_confidence,
+        ) if not insufficient else None,
+        checked_at=report.checked_at,
+        insufficient_history=insufficient,
+        metadata=_build_response_metadata(),
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Admin endpoints
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -531,6 +604,51 @@ def admin_model() -> AdminModelResponse:
         rf_model_available=len(available_rf) > 0,
         rf_model_version=available_rf[0] if available_rf else None,
     )
+
+
+@router.post(
+    "/admin/retrain",
+    response_model=RetrainingResponse,
+    responses=ERROR_RESPONSES,
+    tags=["admin"],
+)
+def admin_trigger_retrain(n_estimators: int = 200) -> RetrainingResponse:
+    """Trigger the monthly RF retraining pipeline from the API.
+
+    Reads ``docs/annotation/rf_training_records.jsonl`` as the base dataset,
+    merges any human feedback from ``artifacts/feedback/feedback.jsonl``,
+    trains a new RF model, and hot-swaps the live pipeline engine.
+
+    Args:
+        n_estimators: Number of trees in the new RF (default 200).
+    """
+    from app.retraining.pipeline import RFRetrainingPipeline
+
+    logger.info("Admin retrain endpoint triggered (n_estimators=%d).", n_estimators)
+    try:
+        retrain_pipeline = RFRetrainingPipeline(settings=settings, use_bert=False)
+        result = retrain_pipeline.run(
+            base_jsonl_path=Path("docs/annotation/rf_training_records.jsonl"),
+            output_dir=Path(settings.rf_model_output_dir),
+            n_estimators=n_estimators,
+            engine=pipeline_engine,
+        )
+        return RetrainingResponse(
+            success=True,
+            model_version=result.training_result.model_version,
+            accuracy=result.training_result.accuracy,
+            total_records=result.total_records,
+            feedback_records=result.feedback_records,
+            model_path=result.model_path,
+            metadata=_build_response_metadata(),
+        )
+    except Exception as exc:
+        logger.error("Admin retrain failed: %s.", exc)
+        return RetrainingResponse(
+            success=False,
+            error=str(exc),
+            metadata=_build_response_metadata(),
+        )
 
 
 @router.get(
