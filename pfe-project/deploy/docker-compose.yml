@@ -1,0 +1,90 @@
+version: "3.9"
+
+services:
+  # ── FastAPI extraction & pipeline API ────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pfe_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      DATABASE_URL: sqlite:////app/data/reporting_app.db
+      RF_MODEL_OUTPUT_DIR: /app/artifacts/models/rf_confidence
+      NER_MODEL_PATH: /app/artifacts/models/ner
+      AUTO_APPROVAL_THRESHOLD: "0.90"
+      REVIEW_MIN_THRESHOLD: "0.70"
+      REVIEW_MAX_THRESHOLD: "0.89"
+      LOG_LEVEL: INFO
+    volumes:
+      - api_artifacts:/app/artifacts
+      - api_data:/app/data
+      - api_feedback:/app/artifacts/feedback
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - pfe_net
+
+  # ── Streamlit KPI dashboard ───────────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pfe_dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      APP_ENV: production
+      DATABASE_URL: sqlite:////app/data/reporting_app.db
+      RF_MODEL_OUTPUT_DIR: /app/artifacts/models/rf_confidence
+      NER_MODEL_PATH: /app/artifacts/models/ner
+      LOG_LEVEL: INFO
+      API_BASE_URL: http://api:8000
+    volumes:
+      - api_artifacts:/app/artifacts
+      - api_data:/app/data
+      - api_feedback:/app/artifacts/feedback
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["streamlit", "run", "app/dashboard/app.py",
+              "--server.port", "8501",
+              "--server.address", "0.0.0.0",
+              "--server.headless", "true"]
+    networks:
+      - pfe_net
+
+  # ── Label Studio annotation tool ──────────────────────────────────────────
+  label_studio:
+    image: heartexlabs/label-studio:latest
+    container_name: pfe_label_studio
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: ""
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+    volumes:
+      - label_studio_data:/label-studio/data
+    networks:
+      - pfe_net
+
+volumes:
+  api_artifacts:
+  api_data:
+  api_feedback:
+  label_studio_data:
+
+networks:
+  pfe_net:
+    driver: bridge

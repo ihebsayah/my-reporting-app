@@ -19,7 +19,8 @@ dependencies = [
   "python-dotenv>=1.0.1,<2.0.0",
   "sqlalchemy>=2.0.32,<3.0.0",
   "alembic>=1.13.2,<2.0.0",
-  "requests>=2.32.3,<3.0.0"
+  "requests>=2.32.3,<3.0.0",
+  "streamlit>=1.39.0,<2.0.0"
 ]
 
 [project.scripts]

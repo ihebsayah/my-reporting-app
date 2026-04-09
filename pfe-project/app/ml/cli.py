@@ -3,12 +3,14 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 
 from app.kpi import PipelineKPIService, kpi_report_to_payload
 from app.logging_config import configure_logging
+from app.ml.feature_builder import EntityFeatureBuilder
 from app.ml.ner_extractor import RegexSpacyEnsembleExtractor
 from app.ml.ner_trainer import NERMetrics, NERMetricsReport, SpacyNERTrainer
+from app.ml.rf_confidence_model import RFConfidenceModel, TrainingRecord
 from app.pipeline.batch_processor import PipelineBatchProcessor
 from app.pipeline.decision_engine import SequentialExtractionDecisionEngine
 
@@ -133,6 +135,128 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="docs/annotation/spacy_train.jsonl",
         help="spaCy JSONL training data path.",
     )
+
+    # ── RF confidence model ────────────────────────────────────────────────
+    train_rf_parser = subparsers.add_parser(
+        "train-rf",
+        help=(
+            "Train the Random Forest confidence model from a labeled JSONL file. "
+            "Each line must have: document_id, text, entities, is_correct (bool)."
+        ),
+    )
+    train_rf_parser.add_argument(
+        "--input-file",
+        default="docs/annotation/rf_training_records.jsonl",
+        help="Labeled JSONL file with TrainingRecord entries.",
+    )
+    train_rf_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory where the versioned .joblib model is saved.",
+    )
+    train_rf_parser.add_argument(
+        "--n-estimators",
+        type=int,
+        default=200,
+        help="Number of trees in the Random Forest (default: 200).",
+    )
+    train_rf_parser.add_argument(
+        "--no-bert",
+        action="store_true",
+        default=False,
+        help="Disable BERT embeddings and use hand-crafted features only.",
+    )
+
+    score_rf_parser = subparsers.add_parser(
+        "score-rf",
+        help="Extract entities from raw text and score them with the RF confidence model.",
+    )
+    score_rf_parser.add_argument(
+        "--text",
+        required=True,
+        help="Raw document text to analyse.",
+    )
+    score_rf_parser.add_argument(
+        "--model-path",
+        default=None,
+        help="Path to a trained RF .joblib file. Uses settings default when omitted.",
+    )
+    score_rf_parser.add_argument(
+        "--no-bert",
+        action="store_true",
+        default=False,
+        help="Disable BERT embeddings (must match the setting used during training).",
+    )
+
+    # ── Monthly retraining ─────────────────────────────────────────────────
+    retrain_rf_parser = subparsers.add_parser(
+        "retrain-rf",
+        help=(
+            "Run the monthly RF retraining pipeline: merges base annotations with "
+            "human feedback corrections and saves a new versioned model."
+        ),
+    )
+    retrain_rf_parser.add_argument(
+        "--input-file",
+        default="docs/annotation/rf_training_records.jsonl",
+        help="Base labeled JSONL training file.",
+    )
+    retrain_rf_parser.add_argument(
+        "--feedback-file",
+        default=None,
+        help="Path to feedback.jsonl. Defaults to artifacts/feedback/feedback.jsonl.",
+    )
+    retrain_rf_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory to save the new versioned RF model. Uses settings default.",
+    )
+    retrain_rf_parser.add_argument(
+        "--n-estimators",
+        type=int,
+        default=200,
+        help="Number of trees in the retrained RF (default: 200).",
+    )
+    retrain_rf_parser.add_argument(
+        "--no-bert",
+        action="store_true",
+        default=False,
+        help="Disable BERT embeddings during retraining.",
+    )
+
+    # ── Drift monitoring ───────────────────────────────────────────────────
+    drift_parser = subparsers.add_parser(
+        "check-drift",
+        help=(
+            "Check for confidence and auto-rate drift by querying the DB "
+            "and comparing baseline vs recent sliding windows."
+        ),
+    )
+    drift_parser.add_argument(
+        "--baseline-window",
+        type=int,
+        default=50,
+        help="Number of records in the baseline window (default: 50).",
+    )
+    drift_parser.add_argument(
+        "--recent-window",
+        type=int,
+        default=20,
+        help="Number of records in the recent window (default: 20).",
+    )
+    drift_parser.add_argument(
+        "--auto-threshold",
+        type=float,
+        default=0.10,
+        help="Auto-rate drop threshold to trigger drift (default: 0.10).",
+    )
+    drift_parser.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=0.05,
+        help="Confidence drop threshold to trigger drift (default: 0.05).",
+    )
+
     return parser
 
 
@@ -262,6 +386,148 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps(payload, indent=2))
         return 0 if not errors else 1
 
+    if args.command == "train-rf":
+        records = _load_rf_training_records(Path(args.input_file))
+        rf_model = RFConfidenceModel(use_bert=not args.no_bert)
+        result = rf_model.train(
+            records,
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            n_estimators=args.n_estimators,
+        )
+        print(
+            json.dumps(
+                {
+                    "model_version": result.model_version,
+                    "model_path": result.model_path,
+                    "train_samples": result.train_samples,
+                    "accuracy": round(result.accuracy, 4),
+                    "feature_count": result.feature_count,
+                    "labels": result.labels,
+                    "trained_at": result.trained_at,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "score-rf":
+        extractor = RegexSpacyEnsembleExtractor()
+        extraction = extractor.extract(args.text)
+        if not extraction.entities:
+            print(json.dumps({"message": "No entities extracted.", "entities": []}, indent=2))
+            return 0
+
+        rf_model = RFConfidenceModel(use_bert=not args.no_bert)
+        model_path_str = args.model_path or rf_model.settings.rf_model_path
+        model_path = Path(model_path_str)
+
+        # Attempt to auto-discover the latest .joblib in a directory.
+        if model_path.is_dir():
+            candidates = sorted(model_path.glob("rf_confidence_v*.joblib"), reverse=True)
+            if not candidates:
+                print(
+                    json.dumps(
+                        {"error": f"No RF model found in {model_path}. Run train-rf first."},
+                        indent=2,
+                    )
+                )
+                return 1
+            model_path = candidates[0]
+
+        rf_model.load(model_path)
+        predictions = rf_model.predict_batch(extraction.entities, args.text)
+        payload = {
+            "text": args.text,
+            "model_version": predictions[0].model_version if predictions else None,
+            "predictions": [
+                {
+                    "label": p.entity_label,
+                    "value": p.entity_text,
+                    "confidence": round(p.confidence, 4),
+                    "decision": p.decision,
+                }
+                for p in predictions
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.command == "retrain-rf":
+        from app.retraining.pipeline import RFRetrainingPipeline
+
+        retrain_pipeline = RFRetrainingPipeline(use_bert=not args.no_bert)
+        result = retrain_pipeline.run(
+            base_jsonl_path=Path(args.input_file),
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            feedback_path=Path(args.feedback_file) if args.feedback_file else None,
+            n_estimators=args.n_estimators,
+        )
+        print(
+            json.dumps(
+                {
+                    "model_version": result.training_result.model_version,
+                    "model_path": result.model_path,
+                    "accuracy": result.training_result.accuracy,
+                    "base_records": result.base_records,
+                    "feedback_records": result.feedback_records,
+                    "total_records": result.total_records,
+                    "feedback_file_exists": result.feedback_file_exists,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "check-drift":
+        from app.config import get_settings
+        from app.database import ExtractionResultRepository, get_session_factory, init_database
+        from app.monitoring.drift import ConfidenceDriftDetector
+
+        drift_settings = get_settings()
+        init_database(drift_settings)
+        session_factory = get_session_factory(drift_settings)
+        needed = args.baseline_window + args.recent_window
+
+        with session_factory() as session:
+            repo = ExtractionResultRepository(session)
+            records = (
+                repo.list_by_decision("auto", limit=needed)
+                + repo.list_by_decision("review", limit=needed)
+                + repo.list_by_decision("reject", limit=needed)
+            )
+
+        detector = ConfidenceDriftDetector(
+            auto_rate_drop_threshold=args.auto_threshold,
+            confidence_drop_threshold=args.confidence_threshold,
+            baseline_window_size=args.baseline_window,
+            recent_window_size=args.recent_window,
+        )
+        samples = detector.samples_from_records(records)
+        report = detector.detect(samples)
+        print(
+            json.dumps(
+                {
+                    "drift_detected": report.drift_detected,
+                    "triggered_signals": report.triggered_signals,
+                    "auto_rate_drop": report.auto_rate_drop,
+                    "confidence_drop": report.confidence_drop,
+                    "baseline": {
+                        "window_size": report.baseline.window_size,
+                        "auto_rate": report.baseline.auto_rate,
+                        "mean_confidence": report.baseline.mean_confidence,
+                    },
+                    "recent": {
+                        "window_size": report.recent.window_size,
+                        "auto_rate": report.recent.auto_rate,
+                        "mean_confidence": report.recent.mean_confidence,
+                    },
+                    "checked_at": report.checked_at,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
 
@@ -291,5 +557,77 @@ def _metrics_report_to_payload(report: NERMetricsReport) -> dict:
     }
 
 
+def _load_rf_training_records(input_path: Path) -> List[TrainingRecord]:
+    """Load RF confidence model training records from a labeled JSONL file.
+
+    Each JSONL line must be a JSON object with:
+      * ``text`` (str) – the document text.
+      * ``entities`` (list of [start, end, label]) – NER spans.
+      * ``is_correct`` (bool) – human-verified correctness label.
+      * ``document_id`` (str, optional) – identifier used as entity source.
+
+    Args:
+        input_path: Path to the labeled JSONL file.
+
+    Returns:
+        List of ``TrainingRecord`` objects ready for ``RFConfidenceModel.train()``.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If any line is malformed.
+    """
+    from app.ml.ner_extractor import ExtractedEntity
+
+    if not input_path.exists():
+        raise FileNotFoundError(
+            f"RF training records file not found: {input_path}\n"
+            "Create it by exporting annotations with `annotation export-annotations` "
+            "and labeling each entity with `is_correct`."
+        )
+
+    records: List[TrainingRecord] = []
+    for line_number, raw_line in enumerate(
+        input_path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not raw_line.strip():
+            continue
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Malformed JSON on line {line_number} of {input_path}: {exc}"
+            ) from exc
+
+        text = str(payload.get("text", ""))
+        is_correct = bool(payload.get("is_correct", False))
+        doc_id = str(payload.get("document_id", f"line-{line_number}"))
+
+        for entity_payload in payload.get("entities", []):
+            start, end, label = int(entity_payload[0]), int(entity_payload[1]), str(entity_payload[2])
+            entity = ExtractedEntity(
+                start=start,
+                end=end,
+                text=text[start:end],
+                label=label,
+                sources=("annotation",),
+                score=1.0 if is_correct else 0.0,
+            )
+            records.append(
+                TrainingRecord(
+                    entity=entity,
+                    document_text=text,
+                    is_correct=is_correct,
+                )
+            )
+
+    if not records:
+        raise ValueError(
+            f"No training records parsed from {input_path}. "
+            "Ensure the file has lines with 'text', 'entities', and 'is_correct' keys."
+        )
+    return records
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
+

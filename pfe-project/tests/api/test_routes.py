@@ -146,6 +146,49 @@ def test_admin_metrics_endpoint_returns_kpi_summary() -> None:
     assert payload["metadata"]["processed_at"]
 
 
+def test_admin_jobs_endpoint_lists_recent_async_jobs() -> None:
+    """Ensure operators can inspect recent persisted async jobs."""
+    submit_response = client.post(
+        "/api/v1/pipeline/batch/submit",
+        json={"texts": ["Invoice INV-2026-003\nTotal: $33.00"], "document_ids": ["doc-3"]},
+    )
+    job_id = submit_response.json()["job_id"]
+
+    response = client.get("/api/v1/admin/jobs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["jobs"]
+    assert any(job["job_id"] == job_id for job in payload["jobs"])
+    assert payload["metadata"]["processed_at"]
+
+
+def test_admin_jobs_endpoint_filters_by_status() -> None:
+    """Ensure admin job listing supports status filtering."""
+    submit_response = client.post(
+        "/api/v1/pipeline/batch/submit",
+        json={"texts": ["Invoice INV-2026-004\nTotal: $44.00"], "document_ids": ["doc-4"]},
+    )
+    job_id = submit_response.json()["job_id"]
+
+    response = client.get("/api/v1/admin/jobs?status=completed&limit=5")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(job["job_id"] == job_id for job in payload["jobs"])
+    assert all(job["status"] == "completed" for job in payload["jobs"])
+
+
+def test_admin_jobs_endpoint_validates_limit() -> None:
+    """Ensure invalid job-list limits return the shared error schema."""
+    response = client.get("/api/v1/admin/jobs?limit=0")
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"] == "limit must be between 1 and 100."
+    assert payload["error_code"] == "http_400"
+
+
 def test_batch_pipeline_endpoint_returns_standard_error_payload() -> None:
     """Ensure handled HTTP errors follow the shared error schema."""
     response = client.post(

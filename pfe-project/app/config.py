@@ -67,6 +67,18 @@ class Settings(BaseSettings):
         default="artifacts/models/ner",
         alias="NER_MODEL_PATH",
     )
+    rf_model_output_dir: str = Field(
+        default="artifacts/models/rf_confidence",
+        alias="RF_MODEL_OUTPUT_DIR",
+    )
+    rf_model_path: str = Field(
+        default="artifacts/models/rf_confidence",
+        alias="RF_MODEL_PATH",
+    )
+    bert_model_name: str = Field(
+        default="all-MiniLM-L6-v2",
+        alias="BERT_MODEL_NAME",
+    )
     pipeline_version: str = Field(
         default="sequential-v1",
         alias="PIPELINE_VERSION",

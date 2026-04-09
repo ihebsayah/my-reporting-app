@@ -3,6 +3,7 @@
 from app.pipeline.decision_engine import (
     FieldDecision,
     PipelineDecisionResult,
+    RFModelLoader,
     SequentialExtractionDecisionEngine,
 )
 from app.pipeline.batch_processor import (
@@ -19,5 +20,6 @@ __all__ = [
     "FieldDecision",
     "PipelineDecisionResult",
     "PipelineBatchProcessor",
+    "RFModelLoader",
     "SequentialExtractionDecisionEngine",
 ]

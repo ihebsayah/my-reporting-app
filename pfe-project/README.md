@@ -25,6 +25,7 @@ This scaffold now covers:
 3. Copy `.env.example` to `.env` and update the values.
 4. Run tests: `pytest`
 5. Run the API: `uvicorn app.main:app --reload`
+6. Run the dashboard: `streamlit run app/dashboard/app.py`
 
 ## API Endpoints
 
@@ -38,6 +39,7 @@ This scaffold now covers:
 - `GET /api/v1/admin/status`
 - `GET /api/v1/admin/model`
 - `GET /api/v1/admin/metrics`
+- `GET /api/v1/admin/jobs`
 
 API errors return a shared JSON payload:
 `{"detail": "...", "error_code": "..."}`.
@@ -50,6 +52,18 @@ Async batch flow:
 2. Poll status and results with `GET /api/v1/pipeline/batch/jobs/{job_id}`
 
 Async batch jobs are persisted through SQLAlchemy ORM, so they can survive API process restarts as long as the configured database remains available.
+Operators can review recent jobs with `GET /api/v1/admin/jobs?status=completed&limit=20`.
+
+## Dashboard
+
+The Streamlit dashboard provides:
+- KPI summary cards
+- per-field extraction KPI tables
+- recent persisted async jobs
+- source document preview rows
+
+Run it with:
+`streamlit run app/dashboard/app.py`
 
 ## Annotation Workflow
 

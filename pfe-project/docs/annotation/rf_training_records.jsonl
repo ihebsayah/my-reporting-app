@@ -1,0 +1,16 @@
+{"document_id": "inv-001", "text": "Invoice INV-2026-001 dated 2026-01-15. Vendor: Acme SARL. Total: $1,200.00", "entities": [[8, 20, "INVOICE_ID"]], "is_correct": true}
+{"document_id": "inv-001", "text": "Invoice INV-2026-001 dated 2026-01-15. Vendor: Acme SARL. Total: $1,200.00", "entities": [[27, 37, "INVOICE_DATE"]], "is_correct": true}
+{"document_id": "inv-001", "text": "Invoice INV-2026-001 dated 2026-01-15. Vendor: Acme SARL. Total: $1,200.00", "entities": [[64, 73, "TOTAL_AMOUNT"]], "is_correct": true}
+{"document_id": "inv-001", "text": "Invoice INV-2026-001 dated 2026-01-15. Vendor: Acme SARL. Total: $1,200.00", "entities": [[47, 57, "VENDOR_NAME"]], "is_correct": true}
+{"document_id": "inv-002", "text": "Invoice INV-2026-002 dated 2026-02-20. Vendor: Beta Corp. Total: $540.00", "entities": [[8, 20, "INVOICE_ID"]], "is_correct": true}
+{"document_id": "inv-002", "text": "Invoice INV-2026-002 dated 2026-02-20. Vendor: Beta Corp. Total: $540.00", "entities": [[27, 37, "INVOICE_DATE"]], "is_correct": true}
+{"document_id": "inv-002", "text": "Invoice INV-2026-002 dated 2026-02-20. Vendor: Beta Corp. Total: $540.00", "entities": [[64, 71, "TOTAL_AMOUNT"]], "is_correct": true}
+{"document_id": "inv-002", "text": "Invoice INV-2026-002 dated 2026-02-20. Vendor: Beta Corp. Total: $540.00", "entities": [[47, 56, "VENDOR_NAME"]], "is_correct": true}
+{"document_id": "inv-003", "text": "Vendor: Gamma LLC. Invoice #INV-777 on March 5, 2026. Total is $99.99", "entities": [[8, 17, "VENDOR_NAME"]], "is_correct": true}
+{"document_id": "inv-003", "text": "Vendor: Gamma LLC. Invoice #INV-777 on March 5, 2026. Total is $99.99", "entities": [[28, 35, "INVOICE_ID"]], "is_correct": true}
+{"document_id": "inv-003", "text": "Vendor: Gamma LLC. Invoice #INV-777 on March 5, 2026. Total is $99.99", "entities": [[39, 52, "INVOICE_DATE"]], "is_correct": true}
+{"document_id": "inv-003", "text": "Vendor: Gamma LLC. Invoice #INV-777 on March 5, 2026. Total is $99.99", "entities": [[63, 69, "TOTAL_AMOUNT"]], "is_correct": true}
+{"document_id": "inv-bad-001", "text": "Invoice XYZ on some date. Price unknown.", "entities": [[8, 11, "INVOICE_ID"]], "is_correct": false}
+{"document_id": "inv-bad-001", "text": "Invoice XYZ on some date. Price unknown.", "entities": [[15, 24, "INVOICE_DATE"]], "is_correct": false}
+{"document_id": "inv-bad-002", "text": "Receipt from supplier 2026-03-01. Amount: 500", "entities": [[22, 32, "INVOICE_DATE"]], "is_correct": true}
+{"document_id": "inv-bad-002", "text": "Receipt from supplier 2026-03-01. Amount: 500", "entities": [[42, 45, "TOTAL_AMOUNT"]], "is_correct": false}
