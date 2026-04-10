@@ -1,0 +1,32 @@
+# ── Agent Service Dockerfile ──────────────────────────────────────────────────
+# Runs: uvicorn agents.main:app --host 0.0.0.0 --port 8001
+# Build context: pfe-project/ (same as main app Dockerfile)
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install agent dependencies
+COPY requirements-agents.txt .
+RUN pip install --no-cache-dir -r requirements-agents.txt
+
+# Copy only the agents package (not the whole app)
+COPY agents/ ./agents/
+
+# Create log directory
+RUN mkdir -p /app/artifacts/agent_logs
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:8001/health || exit 1
+
+CMD ["uvicorn", "agents.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8001", \
+     "--workers", "2", \
+     "--log-level", "info"]

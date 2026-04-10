@@ -38,12 +38,15 @@ dev = [
 package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
-include = ["app*", "tests*"]
+include = ["app*", "agents*", "tests*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+
+# Run agent-only tests without coverage requirement:
+# python3 -m pytest tests/test_agents.py -v --override-ini="addopts="
 
 [tool.flake8]
 max-line-length = 88
