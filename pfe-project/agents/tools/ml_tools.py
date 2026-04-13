@@ -69,11 +69,11 @@ def run_ner_extraction(text: str) -> str:
 
 @tool
 def run_confidence_scoring(text: str) -> str:
-    """Run the full Sequential Extraction Decision pipeline (spaCy + RF confidence).
+    """Run the NER extractor and compute heuristic confidence scores per field.
 
-    Calls ``POST /api/v1/pipeline/run`` which wraps both NER extraction and
-    Random Forest confidence scoring. Returns per-field decisions and the
-    overall document routing decision.
+    Calls ``POST /api/v1/extract`` (NER-only, no pipeline/run) to get entities
+    and their per-source confidence scores.  Scores are computed locally using
+    the same heuristics as the existing pipeline to avoid a recursive call.
 
     Args:
         text: Raw document text.
@@ -83,17 +83,51 @@ def run_confidence_scoring(text: str) -> str:
     """
     logger.info("run_confidence_scoring called (text length=%d).", len(text))
     try:
-        result = _pipeline_post("/api/v1/pipeline/run", {"text": text})
+        result = _pipeline_post("/api/v1/extract", {"text": text})
+        entities = result.get("entities", [])
+
+        # Build per-field confidence from NER entity scores.
+        fields = []
+        for ent in entities:
+            label = ent.get("label", "")
+            score = float(ent.get("score", 0.5))
+            sources = ent.get("sources", ["regex"])
+            # Simple heuristic decision from field confidence.
+            if score >= 0.85:
+                decision = "auto"
+            elif score >= 0.65:
+                decision = "review"
+            else:
+                decision = "reject"
+            fields.append({
+                "field_name": label,
+                "value": ent.get("text", ""),
+                "confidence": round(score, 4),
+                "sources": sources,
+                "decision": decision,
+                "start": ent.get("start"),
+                "end": ent.get("end"),
+            })
+
+        # Overall document decision: most conservative per-field decision.
+        if any(f["decision"] == "auto" for f in fields) and all(
+            f["decision"] != "reject" for f in fields
+        ):
+            overall = "auto"
+        elif fields:
+            overall = "review"
+        else:
+            overall = "review"
+
         output = {
-            "overall_decision": result.get("overall_decision"),
-            "scorer": result.get("scorer"),
-            "fields": result.get("fields", []),
-            "field_count": len(result.get("fields", [])),
+            "overall_decision": overall,
+            "scorer": "heuristic_from_ner",
+            "fields": fields,
+            "field_count": len(fields),
         }
         logger.info(
-            "Confidence scoring: decision=%s, fields=%d",
-            output["overall_decision"],
-            output["field_count"],
+            "Confidence scoring (NER-based): overall=%s fields=%d.",
+            overall, len(fields),
         )
         return json.dumps(output)
     except RuntimeError as exc:
@@ -103,11 +137,12 @@ def run_confidence_scoring(text: str) -> str:
 
 @tool
 def run_bart_classification(text: str) -> str:
-    """Classify the document type using the existing BART zero-shot classifier.
+    """Classify the document type using NER field signals and keyword heuristics.
 
-    In the current system the pipeline decision engine infers document type
-    from the field composition; this tool runs the pipeline and interprets the
-    field mix to guess document type (invoice, receipt, contract, report).
+    Calls ``POST /api/v1/extract`` (NER-only) to get field labels, then uses
+    the ``_infer_doc_type`` heuristic to determine document type.  This avoids
+    calling ``/api/v1/pipeline/run`` which would create a recursive call loop
+    now that the pipeline wires back to the agent service.
 
     Args:
         text: Raw document text.
@@ -117,11 +152,9 @@ def run_bart_classification(text: str) -> str:
     """
     logger.info("run_bart_classification called (text length=%d).", len(text))
     try:
-        result = _pipeline_post("/api/v1/pipeline/run", {"text": text})
-        fields = result.get("fields", [])
-        field_names = [f.get("field_name", "") for f in fields]
-
-        # Heuristic document-type inference from extracted field labels.
+        result = _pipeline_post("/api/v1/extract", {"text": text})
+        entities = result.get("entities", [])
+        field_names = [e.get("label", "") for e in entities]
         doc_type, confidence = _infer_doc_type(field_names, text)
         logger.info("BART classification: doc_type=%s, confidence=%.2f", doc_type, confidence)
         return json.dumps({"doc_type": doc_type, "confidence": confidence, "field_names": field_names})

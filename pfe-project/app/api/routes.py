@@ -26,11 +26,14 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
+from app.api.agent_bridge import agents_enabled as _agents_enabled
+from app.api.agent_bridge import call_agent_service
 from app.api.schemas import (
     AdminJobListResponse,
     AdminModelResponse,
     AdminMetricsResponse,
     AdminStatusResponse,
+    AgentEnrichedPipelineResponse,
     AsyncBatchJobSummaryResponse,
     AsyncBatchStatusResponse,
     AsyncBatchSubmitResponse,
@@ -151,14 +154,24 @@ def extract_entities(request: TextRequest) -> ExtractionResponse:
 
 @router.post(
     "/pipeline/run",
-    response_model=PipelineResponse,
+    response_model=AgentEnrichedPipelineResponse,
     responses=ERROR_RESPONSES,
     tags=["pipeline"],
 )
-def run_pipeline(request: TextRequest) -> PipelineResponse:
-    """Run the sequential extraction pipeline on one document and persist the result."""
+def run_pipeline(request: TextRequest) -> AgentEnrichedPipelineResponse:
+    """Run the sequential extraction pipeline on one document and persist the result.
+
+    When ``AGENT_SERVICE_URL`` is set in the environment, this endpoint also
+    calls the AI agent service and includes the agent decision + reasoning in
+    the ``agent`` field of the response.  If the agent service is unreachable
+    or disabled, ``agent=None`` and the response is identical to the original
+    pipeline output — the existing behaviour is fully preserved.
+    """
     logger.info("Received single-document pipeline request.")
     result = pipeline_engine.run(request.text)
+
+    # Derive a stable document_id for traceability.
+    doc_id = request.text[:40].replace(" ", "_").replace("\n", "")
 
     # Persist every run to the extraction_results table.
     try:
@@ -177,7 +190,7 @@ def run_pipeline(request: TextRequest) -> PipelineResponse:
         ]
         with session_factory() as session:
             ExtractionResultRepository(session).save(
-                document_id=request.text[:40].replace(" ", "_"),
+                document_id=doc_id,
                 source_text=request.text,
                 overall_decision=result.overall_decision,
                 scorer=result.scorer,
@@ -187,7 +200,17 @@ def run_pipeline(request: TextRequest) -> PipelineResponse:
     except Exception as persist_exc:
         logger.warning("Failed to persist pipeline result: %s.", persist_exc)
 
-    return PipelineResponse(
+    # ── Agent service call (additive, never blocks the response) ──────────
+    agent_decision = call_agent_service(text=request.text, document_id=doc_id)
+    if agent_decision:
+        logger.info(
+            "Agent enrichment: action=%s confidence=%.3f doc_id=%s.",
+            agent_decision.action,
+            agent_decision.confidence,
+            doc_id,
+        )
+
+    return AgentEnrichedPipelineResponse(
         overall_decision=result.overall_decision,
         scorer=result.scorer,
         fields=[
@@ -204,6 +227,8 @@ def run_pipeline(request: TextRequest) -> PipelineResponse:
             for fd in result.fields
         ],
         metadata=_build_response_metadata(),
+        agent=agent_decision,
+        agent_enabled=_agents_enabled(),
     )
 
 

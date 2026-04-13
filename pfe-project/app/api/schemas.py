@@ -330,3 +330,64 @@ class RetrainingResponse(BaseModel):
     model_path: Optional[str] = None
     error: Optional[str] = None
     metadata: ResponseMetadata
+
+
+# ── Agent-enriched pipeline schemas (NEW) ────────────────────────────────────
+
+
+class AgentValidationIssue(BaseModel):
+    """One validation issue raised by the Validator Agent."""
+
+    field_name: str
+    issue_type: str
+    severity: str
+    description: str
+
+
+class AgentDecisionResponse(BaseModel):
+    """Agent service decision appended to pipeline responses when agents are enabled.
+
+    This schema is returned as the ``agent`` field inside
+    ``AgentEnrichedPipelineResponse``.  The human dashboard uses it to show
+    the agent reasoning and allow override / feedback submission.
+    """
+
+    action: str = Field(
+        ...,
+        description="Agent routing decision: auto_approve | human_review | reject",
+    )
+    confidence: float = Field(..., description="Final agent confidence score (0.0–1.0)")
+    agent_reasoning: str = Field(..., description="Human-readable reasoning chain")
+    doc_type: str
+    session_id: str
+    duration_ms: int
+    agents_used: List[str]
+    safety_rails_triggered: List[str] = Field(default_factory=list)
+    validation_issues: List[AgentValidationIssue] = Field(default_factory=list)
+    fallback_used: bool = False
+    agent_service_version: str = "unknown"
+
+
+class AgentEnrichedPipelineResponse(BaseModel):
+    """Pipeline response extended with an optional agent decision block.
+
+    Returned by ``POST /api/v1/pipeline/run`` when the agent service is
+    reachable and agents are enabled.  Falls back to the standard
+    ``PipelineResponse`` when the agent service is unavailable.
+    """
+
+    # ── existing pipeline fields (unchanged) ──
+    overall_decision: str
+    fields: List[FieldDecisionResponse]
+    scorer: str = "heuristic"
+    metadata: ResponseMetadata
+
+    # ── agent augmentation (new, optional) ────
+    agent: Optional[AgentDecisionResponse] = Field(
+        default=None,
+        description="Agent service decision. None if agents are disabled or unreachable.",
+    )
+    agent_enabled: bool = Field(
+        default=False,
+        description="Whether the agent service was called for this request.",
+    )
