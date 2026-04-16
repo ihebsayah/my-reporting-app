@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from agents.config import get_agent_settings
+from agents.llm_reasoner import get_reasoner
 from agents.memory.short_term import ShortTermMemory
 from agents.tools.ml_tools import run_ner_extraction, run_confidence_scoring
 
@@ -111,8 +112,16 @@ class ExtractorAgent:
             ner_entities = ner_data.get("entities", [])
             self._observe(f"NER supplementary extraction: {len(ner_entities)} entities.")
 
-        # ── Decide: Merge pipeline + supplementary NER ────────────────────
+        # ── Decide: Merge pipeline + supplementary NER, then LLM review ────
         extracted_fields = self._merge_fields(pipeline_fields, ner_entities, target_fields)
+
+        # ── LLM review (optional upgrade) ─────────────────────────────────
+        extracted_fields = self._llm_review_fields(
+            doc_type=doc_type,
+            extracted_fields=extracted_fields,
+            missing_fields=missing,
+        )
+
         overall_confidence = self._compute_overall_confidence(extracted_fields)
 
         reasoning = self._build_reasoning(
@@ -151,6 +160,61 @@ class ExtractorAgent:
         return result
 
     # ── Internal helpers ───────────────────────────────────────────────────
+
+    def _llm_review_fields(
+        self,
+        doc_type: str,
+        extracted_fields: List[ExtractedField],
+        missing_fields: List[str],
+    ) -> List[ExtractedField]:
+        """Ask the LLM which extracted fields are reliable; adjust decisions.
+
+        If the LLM is unavailable or returns unparseable output the original
+        field list is returned unchanged.
+
+        Args:
+            doc_type: Document type.
+            extracted_fields: Fields from pipeline + NER merge.
+            missing_fields: Target fields not found.
+
+        Returns:
+            Possibly-updated list of ExtractedField objects.
+        """
+        reasoner = get_reasoner()
+        if not reasoner.is_available():
+            self._think("LLM not available — keeping heuristic field decisions.")
+            return extracted_fields
+
+        self._think("LLM available — reviewing field reliability.")
+        field_dicts = [
+            {"field_name": f.field_name, "value": f.value, "confidence": f.confidence}
+            for f in extracted_fields
+        ]
+        llm_output = reasoner.review_extraction(
+            doc_type=doc_type,
+            fields=field_dicts,
+            missing_fields=missing_fields,
+        )
+        if not llm_output:
+            self._observe("LLM extraction review returned no output — using heuristic fields.")
+            return extracted_fields
+
+        reliable = set(llm_output.get("reliable_fields", []))
+        uncertain = set(llm_output.get("uncertain_fields", []))
+        llm_reason = llm_output.get("reasoning", "")
+        self._observe(
+            f"LLM review: reliable={sorted(reliable)}, uncertain={sorted(uncertain)}. "
+            f"Reason: {llm_reason}"
+        )
+
+        # Apply LLM reliability signals to field decisions.
+        for f in extracted_fields:
+            if f.field_name in reliable:
+                f.decision = "auto" if f.confidence >= 0.75 else "review"
+            elif f.field_name in uncertain:
+                f.decision = "review"
+                f.confidence = max(0.0, f.confidence - 0.05)  # Small penalty.
+        return extracted_fields
 
     def _target_fields_for_type(self, doc_type: str) -> List[str]:
         """Return expected field labels for a given document type."""

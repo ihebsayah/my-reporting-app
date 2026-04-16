@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agents.config import get_agent_settings
+from agents.llm_reasoner import get_reasoner
 from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
 from agents.tools.db_tools import lookup_vendor_history
@@ -226,6 +227,14 @@ class ValidatorAgent:
                 ))
                 confidence_adjustment -= 0.05
 
+        # ── LLM risk assessment (optional upgrade) ────────────────────────
+        confidence_adjustment = self._llm_assess_risk(
+            field_map=field_map,
+            vendor_known=vendor_known,
+            issues=issues,
+            confidence_adjustment=confidence_adjustment,
+        )
+
         # ── Decide ────────────────────────────────────────────────────────
         error_count = sum(1 for i in issues if i.severity == "error")
         warn_count = sum(1 for i in issues if i.severity == "warning")
@@ -262,6 +271,59 @@ class ValidatorAgent:
             is_valid, len(issues), error_count, warn_count,
         )
         return result
+
+    # ── LLM risk assessment ────────────────────────────────────────────────
+
+    def _llm_assess_risk(
+        self,
+        field_map: Dict[str, str],
+        vendor_known: bool,
+        issues: List[ValidationIssue],
+        confidence_adjustment: float,
+    ) -> float:
+        """Ask the LLM to assess overall risk and refine confidence adjustment.
+
+        If the LLM is unavailable the original heuristic adjustment is returned.
+
+        Args:
+            field_map: Extracted field name → value mapping.
+            vendor_known: Whether the vendor was found in historical DB.
+            issues: Validation issues collected so far.
+            confidence_adjustment: Current heuristic adjustment.
+
+        Returns:
+            Possibly-refined confidence adjustment float.
+        """
+        reasoner = get_reasoner()
+        if not reasoner.is_available():
+            return confidence_adjustment
+
+        vendor_history = (
+            f"vendor_known={vendor_known}, "
+            f"{len([i for i in issues if i.severity == 'warning'])} warnings, "
+            f"{len([i for i in issues if i.severity == 'error'])} errors"
+        )
+        issue_descriptions = [i.description for i in issues]
+
+        llm_output = reasoner.assess_validation(
+            vendor=field_map.get("VENDOR_NAME", ""),
+            amount=field_map.get("TOTAL_AMOUNT", ""),
+            date=field_map.get("INVOICE_DATE", ""),
+            vendor_history=vendor_history,
+            issues=issue_descriptions,
+        )
+        if not llm_output:
+            return confidence_adjustment
+
+        llm_adj = float(llm_output.get("confidence_adjustment", 0.0))
+        risk_level = llm_output.get("risk_level", "medium")
+        llm_reason = llm_output.get("reasoning", "")
+        self._observe(
+            f"LLM risk assessment: level={risk_level}, adj={llm_adj:+.3f}. {llm_reason}"
+        )
+        # Blend: heuristic 60% + LLM 40% to avoid over-reliance on LLM alone.
+        blended = round(confidence_adjustment * 0.6 + llm_adj * 0.4, 4)
+        return blended
 
     # ── Internal helpers ───────────────────────────────────────────────────
 

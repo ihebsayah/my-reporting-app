@@ -7,12 +7,14 @@ Usage:
 
 Or via Docker Compose (see deploy/docker-compose.yml).
 
-The agent service:
-- Exposes POST /agents/extract  (call from existing FastAPI)
-- Exposes POST /agents/feedback (real-time learning)
-- Exposes GET  /agents/status   (health + enable/disable)
-- Exposes GET  /agents/monitoring/accuracy
-- Exposes POST /agents/admin/disable | enable
+The agent service exposes these routes (all defined in agents/api/extraction_agent.py):
+- POST /agents/extract          — main extraction + decision endpoint
+- POST /agents/feedback         — record human feedback (real-time learning)
+- GET  /agents/status           — health + enabled/disabled state
+- GET  /agents/monitoring/accuracy      — sliding-window accuracy stats
+- GET  /agents/monitoring/rollback-status
+- POST /agents/admin/disable    — disable agents at runtime
+- POST /agents/admin/enable     — re-enable agents at runtime
 """
 
 import logging
