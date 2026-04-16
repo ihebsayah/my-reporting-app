@@ -10,12 +10,24 @@ Tab 2 (AI Agents):   agent status, accuracy metrics, live document tester,
 """
 
 import logging
+import os
+import sys
 
-from .agent_services import AgentDataService
-from .services import DashboardDataService, dashboard_source_exists
+# Streamlit adds app/dashboard/ to sys.path[0] when running app.py directly.
+# That makes Python find this file (app.py) as the 'app' module instead of the
+# pfe-project/app/ package.  Fix: force the project root to position 0 and
+# clear any stale 'app' / 'app.dashboard' cache entries before importing.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _PROJECT_ROOT in sys.path:
+    sys.path.remove(_PROJECT_ROOT)
+sys.path.insert(0, _PROJECT_ROOT)
+sys.modules.pop("app", None)
+sys.modules.pop("app.dashboard", None)
+
+from app.dashboard.agent_services import AgentDataService  # noqa: E402
+from app.dashboard.services import DashboardDataService, dashboard_source_exists  # noqa: E402
 
 logger = logging.getLogger(__name__)
-
 
 def main() -> None:
     """Render the Streamlit operator dashboard."""
