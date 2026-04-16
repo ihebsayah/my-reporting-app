@@ -57,7 +57,7 @@ def main() -> None:
     n_estimators = st.sidebar.number_input(
         "RF n_estimators", min_value=50, max_value=500, value=200, step=50
     )
-    run_retrain = st.sidebar.button("▶  Trigger monthly retraining", use_container_width=True)
+    run_retrain = st.sidebar.button("▶  Trigger monthly retraining", width="stretch")
 
     # ── Main title ─────────────────────────────────────────────────────────────
     st.title("📊 PFE Extraction & Confidence Dashboard")
@@ -140,7 +140,7 @@ def main() -> None:
                         }
                         for item in data.field_kpis
                     ],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
             with right_col:
@@ -156,7 +156,7 @@ def main() -> None:
                                 )
                             ]
                         ).set_index("Field")
-                        st.bar_chart(conf_df, use_container_width=True)
+                        st.bar_chart(conf_df, width="stretch")
                     except ImportError:
                         st.json(storage_kpi.average_confidence_by_field)
                 else:
@@ -177,7 +177,7 @@ def main() -> None:
                         }
                         for p in previews
                     ],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
             with bottom_right:
@@ -193,7 +193,7 @@ def main() -> None:
                         }
                         for j in data.recent_jobs
                     ],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -224,7 +224,7 @@ def main() -> None:
                                     }
                                     for f in rec["fields"]
                                 ],
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
                             )
                 else:
@@ -338,7 +338,7 @@ def _render_agent_tab(st, agent_svc: "AgentDataService") -> None:
         "Document ID (optional)", placeholder="e.g. test-invoice-001", key="agent_test_doc_id"
     )
 
-    if st.button("▶  Run agent pipeline", key="run_agent_btn", use_container_width=False):
+    if st.button("▶  Run agent pipeline", key="run_agent_btn"):
         if not test_text.strip():
             st.warning("Please paste document text before running.")
         else:
@@ -391,7 +391,7 @@ def _render_agent_tab(st, agent_svc: "AgentDataService") -> None:
                                 }
                                 for i in result.validation_issues
                             ],
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True,
                         )
 
@@ -457,7 +457,7 @@ def _render_agent_tab(st, agent_svc: "AgentDataService") -> None:
             sf_amount = st.number_input("Amount (optional)", min_value=0.0, value=0.0)
             sf_notes = st.text_area("Notes (optional)", height=80)
 
-        submitted = st.form_submit_button("Submit feedback", use_container_width=True)
+        submitted = st.form_submit_button("Submit feedback", width="stretch")
         if submitted:
             if not sf_doc_id.strip():
                 st.error("Document ID is required.")
@@ -486,7 +486,7 @@ def _render_agent_tab(st, agent_svc: "AgentDataService") -> None:
         disable_reason = st.text_input(
             "Reason (for disable)", value="dashboard_manual", key="disable_reason"
         )
-        if st.button("🔴  Disable Agents", key="disable_agents_btn", use_container_width=True):
+        if st.button("🔴  Disable Agents", key="disable_agents_btn", width="stretch"):
             ok = agent_svc.disable_agents(reason=disable_reason)
             if ok:
                 st.warning("⚠️ Agents disabled. All documents will route to human review.")
@@ -497,7 +497,7 @@ def _render_agent_tab(st, agent_svc: "AgentDataService") -> None:
     with adm_col2:
         st.markdown("&nbsp;", unsafe_allow_html=True)  # Vertical alignment spacer
         st.markdown("&nbsp;", unsafe_allow_html=True)
-        if st.button("🟢  Re-enable Agents", key="enable_agents_btn", use_container_width=True):
+        if st.button("🟢  Re-enable Agents", key="enable_agents_btn", width="stretch"):
             ok = agent_svc.enable_agents()
             if ok:
                 st.success("✅ Agents re-enabled.")
