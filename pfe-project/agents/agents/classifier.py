@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from agents.config import get_agent_settings
+from agents.llm_reasoner import get_reasoner
 from agents.memory.short_term import ShortTermMemory
 from agents.tools.ml_tools import run_bart_classification, run_ner_extraction
 
@@ -143,7 +144,57 @@ class ClassifierAgent:
         field_names: List[str],
         text: str,
     ) -> ClassifierResult:
-        """Combine BART output with field composition to produce final classification."""
+        """Combine BART output with field composition to produce final classification.
+
+        If the LLM reasoner is available, its judgment supersedes the heuristic
+        decision.  The heuristic path is always computed first and acts as the
+        fallback.
+        """
+        # ── Heuristic path (always computed as fallback) ─────────────────
+        heuristic_result = self._decide_heuristic(bart_type, bart_confidence, field_names)
+
+        # ── LLM path (optional upgrade) ──────────────────────────────────
+        reasoner = get_reasoner()
+        if reasoner.is_available():
+            self._think("LLM is available — requesting LLM-based classification.")
+            llm_output = reasoner.classify_document(
+                text=text,
+                field_names=field_names,
+                bart_doc_type=bart_type,
+                bart_confidence=bart_confidence,
+            )
+            if llm_output and "doc_type" in llm_output:
+                llm_type = llm_output.get("doc_type", heuristic_result.doc_type)
+                llm_conf = float(llm_output.get("confidence", heuristic_result.confidence))
+                llm_reason = llm_output.get("reasoning", "")
+                self._observe(
+                    f"LLM classified doc_type={llm_type}, confidence={llm_conf:.2f}. "
+                    f"Reason: {llm_reason}"
+                )
+                return ClassifierResult(
+                    doc_type=llm_type,
+                    confidence=round(min(0.99, llm_conf), 4),
+                    reasoning=(
+                        f"[LLM] {llm_reason}  "
+                        f"(BART base={bart_type}/{bart_confidence:.2f}, "
+                        f"NER fields={field_names})"
+                    ),
+                    field_names=field_names,
+                )
+            else:
+                self._observe("LLM returned unparseable output — using heuristic fallback.")
+        else:
+            self._think("LLM not available — using heuristic classification.")
+
+        return heuristic_result
+
+    def _decide_heuristic(
+        self,
+        bart_type: str,
+        bart_confidence: float,
+        field_names: List[str],
+    ) -> ClassifierResult:
+        """Original heuristic classification logic (now used as LLM fallback)."""
         doc_type = bart_type
         confidence = bart_confidence
 

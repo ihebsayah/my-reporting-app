@@ -11,8 +11,8 @@ Tab 2 (AI Agents):   agent status, accuracy metrics, live document tester,
 
 import logging
 
-from app.dashboard.agent_services import AgentDataService
-from app.dashboard.services import DashboardDataService, dashboard_source_exists
+from .agent_services import AgentDataService
+from .services import DashboardDataService, dashboard_source_exists
 
 logger = logging.getLogger(__name__)
 

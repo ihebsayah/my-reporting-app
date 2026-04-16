@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from agents.config import get_agent_settings
+from agents.llm_reasoner import get_reasoner
 from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
 
@@ -176,8 +177,15 @@ class RouterAgent:
         is_valid = bool(validation_result.get("is_valid", False))
         vendor_known = bool(validation_result.get("vendor_known", False))
 
-        action = self._apply_routing_logic(
-            final_confidence, is_valid, vendor_known, vendor_pattern
+        # Try LLM routing first — falls back to heuristic automatically.
+        action = self._decide_with_llm(
+            doc_type=doc_type,
+            final_confidence=final_confidence,
+            is_valid=is_valid,
+            vendor_known=vendor_known,
+            field_map=field_map,
+            rails_triggered=rails_triggered,
+            validation_result=validation_result,
         )
         self._observe(f"Routing decision: {action}.")
 
@@ -248,6 +256,58 @@ class RouterAgent:
 
         return rails, force
 
+    def _decide_with_llm(
+        self,
+        doc_type: str,
+        final_confidence: float,
+        is_valid: bool,
+        vendor_known: bool,
+        field_map: Dict[str, str],
+        rails_triggered: List[str],
+        validation_result: Dict[str, Any],
+    ) -> str:
+        """Ask the LLM for a routing decision; fall back to heuristics on failure.
+
+        Safety rails have already been evaluated and were NOT triggered at this
+        point, so the LLM is free to decide between auto_approve and human_review.
+        The heuristic result is used if the LLM is unavailable or returns an
+        invalid action.
+        """
+        # Compute heuristic action as guaranteed fallback.
+        vendor_pattern = self.ltm.lookup_vendor_pattern(field_map.get("VENDOR_NAME", ""))
+        heuristic_action = self._apply_routing_logic(
+            final_confidence, is_valid, vendor_known, vendor_pattern
+        )
+
+        reasoner = get_reasoner()
+        if not reasoner.is_available():
+            self._think("LLM not available — using heuristic routing.")
+            return heuristic_action
+
+        self._think("LLM available — requesting LLM routing decision.")
+        llm_output = reasoner.make_routing_decision(
+            doc_type=doc_type,
+            extraction_confidence=final_confidence,
+            is_valid=is_valid,
+            vendor_known=vendor_known,
+            amount=field_map.get("TOTAL_AMOUNT", ""),
+            safety_rails=rails_triggered,
+            risk_level=validation_result.get("risk_level", "medium"),
+            auto_threshold=_settings.auto_approve_threshold,
+            review_threshold=_settings.human_review_threshold,
+        )
+
+        if llm_output and llm_output.get("action") in (AUTO_APPROVE, HUMAN_REVIEW, REJECT):
+            llm_action = llm_output["action"]
+            llm_reason = llm_output.get("reasoning", "")
+            self._observe(
+                f"LLM decided: {llm_action}. Reason: {llm_reason[:120]}"
+            )
+            return llm_action
+
+        self._observe("LLM returned invalid action — falling back to heuristic routing.")
+        return heuristic_action
+
     def _apply_routing_logic(
         self,
         confidence: float,
@@ -255,7 +315,7 @@ class RouterAgent:
         vendor_known: bool,
         vendor_pattern: Optional[Dict[str, Any]],
     ) -> str:
-        """Apply threshold-based routing after safety rails pass."""
+        """Apply threshold-based routing (heuristic fallback)."""
         # Reject band.
         if not is_valid and confidence < _settings.human_review_threshold:
             return REJECT
