@@ -1,0 +1,13 @@
+{
+  "model_version": "rf_confidence_v20260420_1606",
+  "train_samples": 37,
+  "accuracy": 1.0,
+  "feature_count": 12,
+  "labels": [
+    "INVOICE_DATE",
+    "INVOICE_ID",
+    "TOTAL_AMOUNT",
+    "VENDOR_NAME"
+  ],
+  "trained_at": "2026-04-20T16:06:31.041437+00:00"
+}
