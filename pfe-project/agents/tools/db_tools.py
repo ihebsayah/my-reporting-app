@@ -75,7 +75,7 @@ def _ensure_agent_tables(engine) -> None:
 def lookup_vendor_history(vendor_name: str) -> str:
     """Look up historical invoice data for a vendor from the extraction results DB.
 
-    Queries the existing ``extraction_result_fields`` table (written by the
+    Queries the existing ``field_extraction_records`` table (written by the
     FastAPI pipeline) to understand average amounts, decision distribution,
     and whether the vendor has been seen before.
 
@@ -99,7 +99,7 @@ def lookup_vendor_history(vendor_name: str) -> str:
                 SUM(CASE WHEN er.overall_decision = 'review' THEN 1 ELSE 0 END) as review_count,
                 SUM(CASE WHEN er.overall_decision = 'reject' THEN 1 ELSE 0 END) as reject_count
             FROM extraction_results er
-            JOIN extraction_result_fields erf
+            JOIN field_extraction_records erf
                 ON erf.extraction_result_id = er.id
                 AND erf.field_name = 'VENDOR_NAME'
             WHERE LOWER(erf.value) LIKE LOWER(:vendor_pattern)

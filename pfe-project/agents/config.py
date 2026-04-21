@@ -49,7 +49,7 @@ class AgentSettings(BaseSettings):
 
     # ── PostgreSQL (long-term memory — same DB as existing app) ────────────
     database_url: str = Field(
-        default="sqlite:///./reporting_app.db",
+        default="sqlite:///./data/reporting_app.db",
         alias="DATABASE_URL",
     )
 

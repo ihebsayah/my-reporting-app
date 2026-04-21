@@ -177,9 +177,18 @@ class RegexSpacyEnsembleExtractor:
                 )
             ],
             "TOTAL_AMOUNT": [
-                re.compile(r"Total:\s*([$€£]?\d[\d,]*\.\d{2})", re.IGNORECASE),
-                re.compile(r"\b([$€£]\d[\d,]*\.\d{2})\b"),
-                re.compile(r"\b(\d[\d,]*\.\d{2}\s?(?:USD|EUR|TND))\b", re.IGNORECASE),
+                # "Total Amount: $3,750.00" / "Total Amount: 3750.00"
+                re.compile(r"Total\s+Amount\s*:?\s*([$€£]?[\d,]+\.?\d*)", re.IGNORECASE),
+                # "Amount Due: $500" / "Amount: $500"
+                re.compile(r"Amount(?:\s+Due)?\s*:?\s*([$€£]?[\d,]+\.?\d*)", re.IGNORECASE),
+                # "Total: $500.00"
+                re.compile(r"Total\s*:?\s*([$€£]?[\d,]+\.?\d*)", re.IGNORECASE),
+                # "Montant Total: 500.00" (French)
+                re.compile(r"Montant\s+(?:Total|TTC|HT)\s*:?\s*([$€£]?[\d,]+\.?\d*)", re.IGNORECASE),
+                # Standalone "$3,750.00" or "€1,200.00"
+                re.compile(r"\b([$€£]\s*\d[\d,]*\.?\d*)\b"),
+                # "3,750.00 USD/EUR/TND"
+                re.compile(r"\b(\d[\d,]*\.\d{2}\s?(?:USD|EUR|TND|DT))\b", re.IGNORECASE),
             ],
             "VENDOR_NAME": [
                 re.compile(
