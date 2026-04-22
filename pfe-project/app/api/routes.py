@@ -200,8 +200,12 @@ def run_pipeline(request: TextRequest) -> AgentEnrichedPipelineResponse:
     except Exception as persist_exc:
         logger.warning("Failed to persist pipeline result: %s.", persist_exc)
 
-    # ── Agent service call (additive, never blocks the response) ──────────
-    agent_decision = call_agent_service(text=request.text, document_id=doc_id)
+    # ── Agent service call (Canary — additive, never blocks) ──────────────
+    agent_decision = call_agent_service(
+        text=request.text,
+        document_id=doc_id,
+        main_decision=result.overall_decision,
+    )
     if agent_decision:
         logger.info(
             "Agent enrichment: action=%s confidence=%.3f doc_id=%s.",
