@@ -466,3 +466,83 @@ def _auto_document_id(text: str) -> str:
     slug = text[:40].replace(" ", "_").replace("\n", "").replace("/", "-")
     ts = str(int(time.time()))[-6:]
     return f"doc_{slug}_{ts}"
+
+
+# ── Canary monitoring endpoint ─────────────────────────────────────────────────
+
+import json as _json
+import os as _os
+from pathlib import Path as _Path
+
+
+@router.get("/monitoring/canary", tags=["monitoring"])
+def get_canary_stats(last: int = 0) -> Dict[str, Any]:
+    """Return live canary agreement stats from the rolling canary JSONL log.
+
+    The log is written by ``app/api/agent_bridge.py`` whenever a request is
+    sampled by the canary gate.  This endpoint is read-only — it never writes.
+
+    Query params:
+        last: If > 0, analyse only the last N canary records.
+
+    Returns:
+        JSON with agreement rate, decision breakdown, rails, latency, and
+        a ``recommendation`` field for the dashboard.
+    """
+    canary_log = _Path(
+        _os.environ.get("CANARY_LOG_DIR", "artifacts/canary")
+    ) / "canary.jsonl"
+
+    if not canary_log.exists():
+        return {
+            "total": 0,
+            "agreement_rate": None,
+            "recommendation": "no_data",
+            "message": "No canary log found. Set AGENT_SERVICE_URL and CANARY_RATE.",
+        }
+
+    records = [_json.loads(l) for l in canary_log.open() if l.strip()]
+    if last > 0:
+        records = records[-last:]
+
+    total = len(records)
+    if total == 0:
+        return {"total": 0, "agreement_rate": None, "recommendation": "no_data"}
+
+    agree_n = sum(1 for r in records if r.get("agreement") == "agree")
+    agree_rate = agree_n / total
+
+    from collections import Counter
+    main_counts  = dict(Counter(r["main_decision"] for r in records))
+    agent_counts = dict(Counter(r.get("agent_action_mapped", r.get("agent_action")) for r in records))
+    all_rails    = [rail for r in records for rail in r.get("rails_triggered", [])]
+    rail_counts  = dict(Counter(all_rails))
+
+    avg_conf = sum(r.get("agent_confidence", 0) for r in records) / total
+    avg_ms   = sum(r.get("duration_ms", 0) for r in records) / total
+    fallback_n = sum(1 for r in records if r.get("fallback_used"))
+
+    if agree_rate >= 0.90:
+        recommendation = "ready_for_ab"
+    elif agree_rate >= 0.80:
+        recommendation = "continue_canary"
+    elif agree_rate >= 0.65:
+        recommendation = "investigate"
+    else:
+        recommendation = "rollback_canary"
+
+    return {
+        "total": total,
+        "last_n": last if last > 0 else total,
+        "agree_count": agree_n,
+        "disagree_count": total - agree_n,
+        "agreement_rate": round(agree_rate, 4),
+        "agreement_pct": f"{agree_rate:.1%}",
+        "main_decisions": main_counts,
+        "agent_decisions": agent_counts,
+        "safety_rails": rail_counts,
+        "avg_agent_confidence": round(avg_conf, 4),
+        "avg_latency_ms": round(avg_ms, 1),
+        "fallback_count": fallback_n,
+        "recommendation": recommendation,
+    }

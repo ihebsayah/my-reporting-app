@@ -112,14 +112,15 @@ class RegexSpacyEnsembleExtractor:
         return self._deduplicate_entities(entities)
 
     def _load_spacy_model(self) -> Any:
-        """Load the configured spaCy model lazily."""
+        """Load the configured spaCy model lazily.
+
+        Priority:
+          1. Custom trained model at ``ner_model_path`` (must contain meta.json)
+          2. Installed ``en_core_web_sm`` package (fallback)
+          3. regex-only mode (if spaCy is not installed at all)
+        """
         if self._spacy_model is not None:
             return self._spacy_model
-
-        model_path = Path(self.settings.ner_model_path)
-        if not model_path.exists():
-            logger.info("spaCy model path does not exist yet: %s", model_path)
-            return None
 
         try:
             spacy_module = importlib.import_module("spacy")
@@ -127,9 +128,27 @@ class RegexSpacyEnsembleExtractor:
             logger.warning("spaCy is not installed; ensemble will use regex-only mode.")
             return None
 
-        self._spacy_model = spacy_module.load(model_path)
-        logger.info("Loaded spaCy NER model from %s.", model_path)
-        return self._spacy_model
+        # 1. Try custom-trained model path first
+        model_path = Path(self.settings.ner_model_path)
+        if model_path.exists() and (model_path / "meta.json").exists():
+            try:
+                self._spacy_model = spacy_module.load(model_path)
+                logger.info("Loaded custom spaCy NER model from %s.", model_path)
+                return self._spacy_model
+            except Exception as exc:
+                logger.warning("Failed to load custom spaCy model (%s) — falling back.", exc)
+
+        # 2. Fall back to the installed en_core_web_sm package
+        for fallback in ("en_core_web_sm", "en_core_web_md", "en_core_web_lg"):
+            try:
+                self._spacy_model = spacy_module.load(fallback)
+                logger.info("Using spaCy fallback model '%s' for NER ensemble.", fallback)
+                return self._spacy_model
+            except Exception:
+                continue
+
+        logger.warning("No usable spaCy model found; ensemble will use regex-only mode.")
+        return None
 
     def _merge_entities(
         self,
