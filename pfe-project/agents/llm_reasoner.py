@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import time
 from functools import lru_cache
 from typing import Any, Dict, Optional
 
@@ -27,11 +28,12 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 
 _LLM_BASE_URL: str = os.environ.get("LLM_BASE_URL", "http://localhost:11434")
-_LLM_MODEL: str = os.environ.get("LLM_MODEL_NAME", "mistral")
+_LLM_MODEL: str    = os.environ.get("LLM_MODEL_NAME", "mistral")
 _LLM_TEMPERATURE: float = float(os.environ.get("LLM_TEMPERATURE", "0.1"))
-_LLM_MAX_TOKENS: int = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
-_LLM_TIMEOUT: float = float(os.environ.get("LLM_TIMEOUT", "30.0"))
-_LLM_ENABLED: bool = os.environ.get("LLM_ENABLED", "true").lower() == "true"
+_LLM_MAX_TOKENS: int    = int(os.environ.get("LLM_MAX_TOKENS", "1024"))
+_LLM_TIMEOUT: float     = float(os.environ.get("LLM_TIMEOUT", "30.0"))
+_LLM_ENABLED: bool      = os.environ.get("LLM_ENABLED", "true").lower() == "true"
+_LLM_PROBE_TTL: float   = float(os.environ.get("LLM_PROBE_TTL", "60"))  # re-probe interval (s)
 
 
 # ── ReAct prompt templates ────────────────────────────────────────────────────
@@ -132,6 +134,7 @@ class LLMReasoner:
         self.timeout = timeout
         self._llm = None
         self._available: Optional[bool] = None  # None = not yet tested
+        self._last_probe_at: float = 0.0          # epoch time of last probe
 
     def _get_llm(self):
         """Lazy-initialise the LangChain OllamaLLM client."""
@@ -162,35 +165,54 @@ class LLMReasoner:
             return None
 
     def is_available(self) -> bool:
-        """Check if the Ollama server is reachable (cached after first call).
+        """Check if the Ollama server is reachable.
+
+        Result is cached for ``LLM_PROBE_TTL`` seconds (default 60s) so the
+        agent service automatically detects when Ollama comes online without
+        requiring a restart.  When Ollama is unavailable agents fall back to
+        heuristic reasoning gracefully.
 
         Returns:
-            True if Ollama responds to a health probe.
+            True if Ollama responds to a health probe within 3 seconds.
         """
-        if self._available is not None:
-            return self._available
+        now = time.monotonic()
+        cache_valid = (
+            self._available is not None
+            and (now - self._last_probe_at) < _LLM_PROBE_TTL
+        )
+        if cache_valid:
+            return self._available  # type: ignore[return-value]
+
         if not _LLM_ENABLED:
             self._available = False
+            self._last_probe_at = now
             return False
         try:
             import httpx
             resp = httpx.get(f"{self.base_url}/api/tags", timeout=3.0)
-            self._available = resp.status_code == 200
-            if self._available:
-                logger.info("LLMReasoner: Ollama server reachable at %s.", self.base_url)
-            else:
+            newly_available = resp.status_code == 200
+            if newly_available and self._available is False:
+                logger.info(
+                    "LLMReasoner: Ollama back online at %s — switching to LLM reasoning.",
+                    self.base_url,
+                )
+                self._llm = None  # Force reinitialisation of the client
+            elif not newly_available:
                 logger.warning(
                     "LLMReasoner: Ollama at %s returned HTTP %d.",
                     self.base_url, resp.status_code,
                 )
+            self._available = newly_available
         except Exception as exc:
-            logger.info(
-                "LLMReasoner: Ollama not reachable at %s (%s). "
-                "Agents will use heuristic reasoning.",
-                self.base_url, exc,
-            )
+            if self._available is not False:
+                logger.info(
+                    "LLMReasoner: Ollama not reachable at %s (%s). "
+                    "Agents will use heuristic reasoning (re-probing every %.0fs).",
+                    self.base_url, exc, _LLM_PROBE_TTL,
+                )
             self._available = False
-        return self._available
+        self._last_probe_at = now
+        return self._available  # type: ignore[return-value]
 
     def invoke(self, prompt: str) -> Optional[str]:
         """Call the LLM and return the raw text response, or None on failure.
