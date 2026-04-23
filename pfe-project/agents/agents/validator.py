@@ -298,11 +298,9 @@ class ValidatorAgent:
         if not reasoner.is_available():
             return confidence_adjustment
 
-        vendor_history = (
-            f"vendor_known={vendor_known}, "
-            f"{len([i for i in issues if i.severity == 'warning'])} warnings, "
-            f"{len([i for i in issues if i.severity == 'error'])} errors"
-        )
+        # Use accumulated long-term stats for the LLM prompt.
+        vendor = field_map.get("VENDOR_NAME", "")
+        vendor_history = self.ltm.get_vendor_summary(vendor) if vendor else "no history found"
         issue_descriptions = [i.description for i in issues]
 
         llm_output = reasoner.assess_validation(
