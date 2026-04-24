@@ -40,29 +40,50 @@ def _get_engine(database_url: str):
 
 
 def _ensure_table(engine) -> None:
-    """Create agent_patterns table if it doesn't exist."""
+    """Verify agent_patterns exists; if not, create it.
+
+    The canonical schema is owned by ``agents/tools/db_tools.py``.
+    This function is a safety net in case LongTermMemory is used outside
+    the agent service (e.g. in standalone scripts).
+    """
     from sqlalchemy import text
     ddl = """
     CREATE TABLE IF NOT EXISTS agent_patterns (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        pattern_key    TEXT NOT NULL UNIQUE,
-        approve_count  INTEGER NOT NULL DEFAULT 0,
-        reject_count   INTEGER NOT NULL DEFAULT 0,
-        review_count   INTEGER NOT NULL DEFAULT 0,
-        total_count    INTEGER NOT NULL DEFAULT 0,
-        last_amount    REAL,
-        last_outcome   TEXT,
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        pattern_key         TEXT    NOT NULL UNIQUE,
+        approve_count       INTEGER NOT NULL DEFAULT 0,
+        reject_count        INTEGER NOT NULL DEFAULT 0,
+        review_count        INTEGER NOT NULL DEFAULT 0,
+        total_count         INTEGER NOT NULL DEFAULT 0,
+        last_amount         REAL,
+        last_outcome        TEXT,
         last_agent_decision TEXT,
         last_document_id    TEXT,
-        notes              TEXT,
-        pattern_value      TEXT,
-        occurrences        INTEGER NOT NULL DEFAULT 0,
-        last_seen          TEXT,
-        created_at         TEXT
+        notes               TEXT,
+        pattern_value       TEXT,
+        occurrences         INTEGER NOT NULL DEFAULT 0,
+        last_seen           TEXT,
+        created_at          TEXT
     )
     """
+    migrate_columns = [
+        "ALTER TABLE agent_patterns ADD COLUMN approve_count       INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN reject_count        INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN review_count        INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN total_count         INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN last_amount         REAL",
+        "ALTER TABLE agent_patterns ADD COLUMN last_outcome        TEXT",
+        "ALTER TABLE agent_patterns ADD COLUMN last_agent_decision TEXT",
+        "ALTER TABLE agent_patterns ADD COLUMN last_document_id    TEXT",
+        "ALTER TABLE agent_patterns ADD COLUMN notes               TEXT",
+    ]
     with engine.connect() as conn:
         conn.execute(text(ddl))
+        for col_sql in migrate_columns:
+            try:
+                conn.execute(text(col_sql))
+            except Exception:
+                pass  # Column already exists.
         conn.commit()
 
 

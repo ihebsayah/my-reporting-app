@@ -40,35 +40,69 @@ def _get_session():
 
 
 def _ensure_agent_tables(engine) -> None:
-    """Create agent-specific tables if they do not exist yet."""
-    ddl = """
+    """Create agent-specific tables if they do not exist yet.
+
+    Also runs ALTER TABLE to add columns introduced in later versions so
+    existing SQLite databases are upgraded automatically on startup.
+    """
+    create_decisions = """
     CREATE TABLE IF NOT EXISTS agent_decisions (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        document_id TEXT        NOT NULL,
-        action      TEXT        NOT NULL,
-        confidence  REAL        NOT NULL,
-        reasoning   TEXT,
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id    TEXT    NOT NULL,
+        action         TEXT    NOT NULL,
+        confidence     REAL    NOT NULL,
+        reasoning      TEXT,
         human_override TEXT,
         human_feedback TEXT,
-        created_at  TEXT        NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_patterns (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        pattern_key TEXT        NOT NULL UNIQUE,
-        pattern_value TEXT      NOT NULL,
-        occurrences INTEGER     DEFAULT 1,
-        last_seen   TEXT        NOT NULL,
-        created_at  TEXT        NOT NULL
-    );
+        created_at     TEXT    NOT NULL
+    )
     """
+
+    # Full schema — includes accumulated stats columns added in v2.
+    create_patterns = """
+    CREATE TABLE IF NOT EXISTS agent_patterns (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        pattern_key         TEXT    NOT NULL UNIQUE,
+        approve_count       INTEGER NOT NULL DEFAULT 0,
+        reject_count        INTEGER NOT NULL DEFAULT 0,
+        review_count        INTEGER NOT NULL DEFAULT 0,
+        total_count         INTEGER NOT NULL DEFAULT 0,
+        last_amount         REAL,
+        last_outcome        TEXT,
+        last_agent_decision TEXT,
+        last_document_id    TEXT,
+        notes               TEXT,
+        pattern_value       TEXT,
+        occurrences         INTEGER NOT NULL DEFAULT 0,
+        last_seen           TEXT,
+        created_at          TEXT
+    )
+    """
+
+    # Backward-compat: add new columns to existing DBs that have the old schema.
+    migrate_columns = [
+        "ALTER TABLE agent_patterns ADD COLUMN approve_count       INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN reject_count        INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN review_count        INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN total_count         INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_patterns ADD COLUMN last_amount         REAL",
+        "ALTER TABLE agent_patterns ADD COLUMN last_outcome        TEXT",
+        "ALTER TABLE agent_patterns ADD COLUMN last_agent_decision TEXT",
+        "ALTER TABLE agent_patterns ADD COLUMN last_document_id    TEXT",
+        "ALTER TABLE agent_patterns ADD COLUMN notes               TEXT",
+    ]
+
     with engine.connect() as conn:
-        for statement in ddl.strip().split(";"):
-            stmt = statement.strip()
-            if stmt:
-                conn.execute(text(stmt))
+        conn.execute(text(create_decisions))
+        conn.execute(text(create_patterns))
+        # Try to add each column; SQLite raises OperationalError if it exists — that's fine.
+        for col_sql in migrate_columns:
+            try:
+                conn.execute(text(col_sql))
+            except Exception:
+                pass  # Column already exists — expected on fresh DBs.
         conn.commit()
-    logger.info("Agent DB tables ensured.")
+    logger.info("Agent DB tables ensured (schema v2 with accumulated stats).")
 
 
 @tool
